@@ -129,7 +129,8 @@ ip4_sixrd_get_domain (u32 adj_index, ip6_address_t *addr,
   if (p[0] != ~0)
     return pool_elt_at_index(mm->domains, p[0]);
 
-  u32 ai = ip6_fib_lookup_with_table(im6, 0, addr);
+  ip6_address_t zero_address = {}; //FIXME
+  u32 ai = ip6_fib_lookup_with_table(im6, 0, addr, &zero_address);
   ip_adjacency_t *adj6 = ip_get_adjacency (lm6, ai);
   if (PREDICT_TRUE(adj6->lookup_next_index == IP_LOOKUP_NEXT_SIXRD)) {
     uword *p = (uword *)adj6->rewrite_data;

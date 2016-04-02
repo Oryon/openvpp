@@ -386,9 +386,10 @@ map_pre_resolve (ip4_address_t *ip4, ip6_address_t *ip6)
   map_main_t *mm = &map_main;
   ip4_main_t *im4 = &ip4_main;
   ip6_main_t *im6 = &ip6_main;
+  ip6_address_t zero_address = {}; //FIXME
 
   if (ip6->as_u64[0] != 0 || ip6->as_u64[1] != 0) {
-    mm->adj6_index = ip6_fib_lookup_with_table(im6, 0, ip6);
+    mm->adj6_index = ip6_fib_lookup_with_table(im6, 0, ip6, &zero_address);
     clib_warning("FIB lookup results in: %u", mm->adj6_index);
   }
   if (ip4->as_u32 != 0) {

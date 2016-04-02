@@ -131,6 +131,7 @@ typedef enum {
 
 typedef struct ip6_main_t {
   BVT(clib_bihash) ip6_lookup_table;
+  clib_bihash_40_8_t ip6_srclookup_table;
 
   ip_lookup_main_t lookup_main;
 
@@ -139,6 +140,11 @@ typedef struct ip6_main_t {
   u8 * prefix_lengths_in_search_order;
   i32 dst_address_length_refcounts[129];
   
+  /* same count system for src prefixes */
+  uword * non_empty_src_address_length_bitmap;
+  u8 * srcprefix_lengths_in_search_order;
+  i32 src_address_length_refcounts[129];
+
   /* Vector of FIBs. */
   ip6_fib_t * fibs;
 
@@ -168,6 +174,10 @@ typedef struct ip6_main_t {
   /* ip6 lookup table config parameters */
   u32 lookup_table_nbuckets;
   uword lookup_table_size;
+
+  /* ip6 src-specific lookup table config parameters */
+  u32 srclookup_table_nbuckets;
+  uword srclookup_table_size;
 
   /* Seed for Jenkins hash used to compute ip6 flow hash. */
   u32 flow_hash_seed;
@@ -203,9 +213,9 @@ typedef union {
   } up_down_event;
 } ip6_icmp_neighbor_discovery_event_data_t;
 
-u32 ip6_fib_lookup (ip6_main_t * im, u32 sw_if_index, ip6_address_t * dst);
+u32 ip6_fib_lookup (ip6_main_t * im, u32 sw_if_index, ip6_address_t * dst,  ip6_address_t * src);
 u32 ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index, 
-                               ip6_address_t * dst);
+                               ip6_address_t * dst, ip6_address_t * src);
 ip6_fib_t * find_ip6_fib_by_table_index_or_id (ip6_main_t * im, 
                                                u32 table_index_or_id, 
                                                u32 flags);
@@ -265,7 +275,7 @@ ip6_src_lookup_for_packet (ip6_main_t * im, vlib_buffer_t * b, ip6_header_t * i)
   if (vnet_buffer (b)->ip.adj_index[VLIB_RX] == ~0)
     vnet_buffer (b)->ip.adj_index[VLIB_RX]
       = ip6_fib_lookup (im, vnet_buffer (b)->sw_if_index[VLIB_RX],
-			&i->src_address);
+			&i->src_address, &i->dst_address); //FIXME: i->dst_address might be just wrong
   return vnet_buffer (b)->ip.adj_index[VLIB_RX];
 }
 
@@ -324,6 +334,10 @@ typedef struct {
   ip6_address_t dst_address;
   u32 dst_address_length;
 
+  /* Source address (prefix) and length. */
+  ip6_address_t src_address;
+  u32 src_address_length;
+
   /* Adjacency to use for this destination. */
   u32 adj_index;
 
@@ -340,6 +354,8 @@ void ip6_add_del_route_next_hop (ip6_main_t * im,
 				 u32 flags,
 				 ip6_address_t * dst_address,
 				 u32 dst_address_length,
+				 ip6_address_t * src_address,
+				 u32 src_address_length,
 				 ip6_address_t * next_hop,
 				 u32 next_hop_sw_if_index,
 				 u32 next_hop_weight, u32 adj_index,

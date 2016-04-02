@@ -1096,9 +1096,10 @@ static uword unformat_ip_adjacency (unformat_input_t * input, va_list * args)
       ip_lookup_main_t * lm = is_ip6 ? &ip6_main.lookup_main : &ip4_main.lookup_main;
       ip_adjacency_t * a_adj;
       u32 adj_index;
+      ip6_address_t zero_address = {}; //FIXME
 
       if (is_ip6)
-	adj_index = ip6_fib_lookup (&ip6_main, sw_if_index, &a46.ip6);
+	adj_index = ip6_fib_lookup (&ip6_main, sw_if_index, &a46.ip6, &zero_address);
       else
 	adj_index = ip4_fib_lookup (&ip4_main, sw_if_index, &a46.ip4);
 
@@ -1155,7 +1156,9 @@ vnet_ip_route_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_com
   u32 sw_if_index, * sw_if_indices = 0;
   ip4_address_t ip4_addr, * ip4_dst_addresses = 0, * ip4_via_next_hops = 0;
   ip6_address_t ip6_addr, * ip6_dst_addresses = 0, * ip6_via_next_hops = 0;
+  ip6_address_t ip6_srcaddr, * ip6_src_addresses = 0;
   u32 dst_address_length, * dst_address_lengths = 0;
+  u32 src_address_length, * src_address_lengths = 0;
   ip_adjacency_t parse_adj, * add_adj = 0;
   unformat_input_t _line_input, * line_input = &_line_input;
   f64 count;
@@ -1190,13 +1193,27 @@ vnet_ip_route_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_com
 	  vec_add1 (dst_address_lengths, dst_address_length);
 	}
 
+      else if (unformat (line_input, "%U/%d from %U/%d",
+                         unformat_ip6_address, &ip6_addr,
+                         &dst_address_length,
+                         unformat_ip6_address, &ip6_srcaddr,
+                         &src_address_length))
+      {
+        vec_add1 (ip6_dst_addresses, ip6_addr);
+        vec_add1 (dst_address_lengths, dst_address_length);
+        vec_add1 (ip6_src_addresses, ip6_srcaddr);
+        vec_add1 (src_address_lengths, src_address_length);
+      }
+
       else if (unformat (line_input, "%U/%d",
-			 unformat_ip6_address, &ip6_addr,
-			 &dst_address_length))
-	{
-	  vec_add1 (ip6_dst_addresses, ip6_addr);
-	  vec_add1 (dst_address_lengths, dst_address_length);
-	}
+                         unformat_ip6_address, &ip6_addr,
+                         &dst_address_length))
+      {
+        vec_add1 (ip6_dst_addresses, ip6_addr);
+        vec_add1 (dst_address_lengths, dst_address_length);
+        vec_add1 (ip6_src_addresses, ip6_srcaddr);
+        vec_add1 (src_address_lengths, 0);
+      }
 
       else if (unformat (line_input, "via %U %U weight %u",
 			 unformat_ip4_address, &ip4_addr,
@@ -1479,14 +1496,16 @@ vnet_ip_route_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_com
 	a.table_index_or_table_id = table_id;
 	a.dst_address = ip6_dst_addresses[i];
 	a.dst_address_length = dst_address_lengths[i];
+	a.src_address = ip6_src_addresses[i];
+	a.src_address_length = src_address_lengths[i];
 	a.adj_index = ~0;
 
 	if (is_del)
 	  {
 	    if (vec_len (ip6_via_next_hops) == 0)
 	      {
-                BVT(clib_bihash_kv) kv, value;
-                ip6_address_t dst_address;
+                clib_bihash_kv_40_8_t kv, value;
+                ip6_address_t dst_address, src_address;
                 ip6_fib_t * fib;
 
                 fib = find_ip6_fib_by_table_index_or_id (im6, table_id, 
@@ -1495,16 +1514,20 @@ vnet_ip_route_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_com
 		a.flags |= IP4_ROUTE_FLAG_DEL;
 
                 dst_address = ip6_dst_addresses[i];
-
-                ip6_address_mask (&dst_address, 
+                src_address = ip6_src_addresses[i];
+                ip6_address_mask (&dst_address,
                                   &im6->fib_masks[dst_address_length]);
+                ip6_address_mask (&src_address,
+                                  &im6->fib_masks[src_address_length]);
                 
                 kv.key[0] = dst_address.as_u64[0];
                 kv.key[1] = dst_address.as_u64[1];
-                kv.key[2] = ((u64)(fib - im6->fibs)<<32)
-                  | a.dst_address_length;
+                kv.key[2] = src_address.as_u64[0];
+                kv.key[3] = src_address.as_u64[1];
+                kv.key[4] = ((u64)(fib - im6->fibs)<<32)
+                  | a.dst_address_length | (a.src_address_length << 8);
                 
-                if (BV(clib_bihash_search)(&im6->ip6_lookup_table,
+                if (clib_bihash_search_40_8(&im6->ip6_srclookup_table,
                                            &kv, &value) == 0)
                   a.adj_index = value.value;
                 else
@@ -1529,6 +1552,8 @@ vnet_ip_route_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_com
 						IP6_ROUTE_FLAG_DEL,
 						&a.dst_address,
 						a.dst_address_length,
+						&a.src_address,
+						a.src_address_length,
 						&ip6_via_next_hops[i],
 						sw_if_indices[i],
 						weights[i], (u32)~0,
@@ -1555,6 +1580,8 @@ vnet_ip_route_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_com
 						IP6_ROUTE_FLAG_ADD,
 						&a.dst_address,
 						a.dst_address_length,
+						&a.src_address,
+						a.src_address_length,
 						&ip6_via_next_hops[i],
 						sw_if_indices[i],
 						weights[i], (u32)~0,

@@ -49,6 +49,10 @@
 #include <vppinfra/bihash_24_8.h>
 #include <vppinfra/bihash_template.c>
 
+#define FIB_GET_ADJINDEX(val) ((val) & 0xffffffff)
+#define FIB_GET_SRCCOUNT(val) ((val) >> 32)
+#define FIB_SET_VALUE(srccount, adj) ((((u64)(srccount)) << 32) | ((((u64)(adj)) & 0xffffffff)))
+
 static void compute_prefix_lengths_in_search_order (ip6_main_t * im)
 {
   int i;
@@ -61,15 +65,30 @@ static void compute_prefix_lengths_in_search_order (ip6_main_t * im)
   }));
 }
 
+static void compute_srcprefix_lengths_in_search_order (ip6_main_t * im)
+{
+  int i;
+  vec_reset_length (im->srcprefix_lengths_in_search_order);
+  /* Note: bitmap reversed so this is in fact a longest prefix match */
+  clib_bitmap_foreach (i, im->non_empty_src_address_length_bitmap,
+  ({
+    int src_address_length = 128 - i;
+    vec_add1 (im->srcprefix_lengths_in_search_order, src_address_length);
+  }));
+}
+
 u32 
-ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index, ip6_address_t * dst)
+ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index,
+                           ip6_address_t * dst, ip6_address_t * src)
 {
   ip_lookup_main_t * lm = &im->lookup_main;
-  int i, len;
+  int i, len, j, srclen;
   int rv;
   BVT(clib_bihash_kv) kv, value;
+  clib_bihash_kv_40_8_t kv2, value2;
 
   len = vec_len (im->prefix_lengths_in_search_order);
+  srclen = vec_len (im->srcprefix_lengths_in_search_order);
 
   for (i = 0; i < len; i++)
     {
@@ -82,18 +101,42 @@ ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index, ip6_address_t * dst)
       kv.key[1] = dst->as_u64[1] & mask->as_u64[1];
       kv.key[2] = ((u64)((fib_index))<<32) | dst_address_length;
       
-      rv = BV(clib_bihash_search_inline_2)(&im->ip6_lookup_table, &kv, &value);
-      if (rv == 0)
-        return value.value;
+      rv = clib_bihash_search_inline_2_24_8(&im->ip6_lookup_table, &kv, &value);
+      if (rv != 0)
+        continue;
+
+      if (FIB_GET_SRCCOUNT(value.value) == 1
+          && FIB_GET_ADJINDEX(value.value) != ~0)
+        return FIB_GET_ADJINDEX(value.value);
+
+      kv2.key[0] = dst->as_u64[0] & mask->as_u64[0];
+      kv2.key[1] = dst->as_u64[1] & mask->as_u64[1];
+
+      for (j = 0; j < srclen; j++) {
+        int src_address_length = im->srcprefix_lengths_in_search_order[i];
+        mask = &im->fib_masks[src_address_length];
+
+        ASSERT(src_address_length >= 0 && src_address_length <= 128);
+
+        kv2.key[2] = src->as_u64[0] & mask->as_u64[0];
+        kv2.key[3] = src->as_u64[1] & mask->as_u64[1];
+        kv2.key[4] = ((u64)((fib_index))<<32) |
+            dst_address_length | (src_address_length << 8);
+
+        rv = clib_bihash_search_inline_2_40_8(&im->ip6_srclookup_table, &kv2, &value2);
+        if (rv == 0)
+          return value2.value;
+      }
     }
 
   return lm->miss_adj_index;
 }
 
-u32 ip6_fib_lookup (ip6_main_t * im, u32 sw_if_index, ip6_address_t * dst)
+u32 ip6_fib_lookup (ip6_main_t * im, u32 sw_if_index,
+                    ip6_address_t * dst, ip6_address_t * src)
 {
     u32 fib_index = vec_elt (im->fib_index_by_sw_if_index, sw_if_index);
-    return ip6_fib_lookup_with_table (im, fib_index, dst);
+    return ip6_fib_lookup_with_table (im, fib_index, dst, src);
 }
 
 void
@@ -200,11 +243,12 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
 {
   ip_lookup_main_t * lm = &im->lookup_main;
   ip6_fib_t * fib;
-  ip6_address_t dst_address;
-  u32 dst_address_length, adj_index;
+  ip6_address_t dst_address, src_address;
+  u32 dst_address_length, src_address_length, adj_index;
   uword is_del;
   u32 old_adj_index = ~0;
-  BVT(clib_bihash_kv) kv, value;
+  clib_bihash_kv_24_8_t kv, value;
+  clib_bihash_kv_40_8_t kv2, value2;
 
   vlib_smp_unsafe_warning();
 
@@ -221,11 +265,14 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
 
   dst_address = a->dst_address;
   dst_address_length = a->dst_address_length;
+  src_address = a->src_address;
+  src_address_length = a->src_address_length;
   fib = find_ip6_fib_by_table_index_or_id (im, a->table_index_or_table_id, 
                                            a->flags);
 
   ASSERT (dst_address_length < ARRAY_LEN (im->fib_masks));
   ip6_address_mask (&dst_address, &im->fib_masks[dst_address_length]);
+  ip6_address_mask (&src_address, &im->fib_masks[src_address_length]);
 
   /* refcount accounting */
   if (is_del)
@@ -238,6 +285,14 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
                              128 - dst_address_length, 0);
           compute_prefix_lengths_in_search_order (im);
         }
+      ASSERT (im->src_address_length_refcounts[src_address_length] > 0);
+      if (--im->src_address_length_refcounts[src_address_length] == 0)
+      {
+        im->non_empty_src_address_length_bitmap =
+            clib_bitmap_set (im->non_empty_src_address_length_bitmap,
+                             128 - src_address_length, 0);
+        compute_srcprefix_lengths_in_search_order (im);
+      }
     }
   else
     {
@@ -247,26 +302,58 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
         clib_bitmap_set (im->non_empty_dst_address_length_bitmap, 
                              128 - dst_address_length, 1);
       compute_prefix_lengths_in_search_order (im);
+
+      im->src_address_length_refcounts[src_address_length]++;
+
+      im->non_empty_src_address_length_bitmap =
+          clib_bitmap_set (im->non_empty_src_address_length_bitmap,
+                           128 - src_address_length, 1);
+      compute_srcprefix_lengths_in_search_order (im);
     }
     
   kv.key[0] = dst_address.as_u64[0];
   kv.key[1] = dst_address.as_u64[1];
   kv.key[2] = ((u64)((fib - im->fibs))<<32) | dst_address_length;
 
-  if (BV(clib_bihash_search)(&im->ip6_lookup_table, &kv, &value) == 0)
-    old_adj_index = value.value;
+  kv2.key[0] = dst_address.as_u64[0];
+  kv2.key[1] = dst_address.as_u64[1];
+  kv2.key[2] = src_address.as_u64[0];
+  kv2.key[3] = src_address.as_u64[1];
+  kv2.key[4] = ((u64)((fib - im->fibs))<<32) |
+      dst_address_length | (src_address_length << 8);
 
-  if (is_del)
-    BV(clib_bihash_add_del) (&im->ip6_lookup_table, &kv, 0 /* is_add */);
+  if (clib_bihash_search_40_8(&im->ip6_srclookup_table, &kv2, &value2) == 0)
+      old_adj_index = value2.value;
+
+  if (is_del) {
+    //Delete src-dst-entry
+    clib_bihash_add_del_40_8(&im->ip6_srclookup_table, &kv2, 0 /* is_add */);
+
+    //Find and decrement refcount of dst-only-entry
+    ASSERT(clib_bihash_search_24_8(&im->ip6_lookup_table, &kv, &value) == 0);
+    u32 new_srccount = FIB_GET_SRCCOUNT(value.value) - 1;
+    u32 dflt_adj = FIB_GET_ADJINDEX(value.value);
+
+    value.value = FIB_SET_VALUE(new_srccount, src_address_length ? dflt_adj : ~0);
+    clib_bihash_add_del_24_8(&im->ip6_lookup_table, &kv, !!new_srccount /* is_add */);
+  }
   else
     {
       /* Make sure adj index is valid. */
       if (CLIB_DEBUG > 0)
         (void) ip_get_adjacency (lm, adj_index);
 
-      kv.value = adj_index;
+      kv2.value = adj_index;
+      clib_bihash_add_del_40_8(&im->ip6_srclookup_table, &kv2, 1);
 
-      BV(clib_bihash_add_del) (&im->ip6_lookup_table, &kv, 1 /* is_add */);
+      u32 new_srccount = 1;
+      u32 dflt_adj = src_address_length ? ~0: adj_index;
+      if (clib_bihash_search_24_8(&im->ip6_lookup_table, &kv, &value) == 0) {
+        new_srccount = FIB_GET_SRCCOUNT(value.value) + 1;
+        dflt_adj = src_address_length ? FIB_GET_ADJINDEX(value.value) : adj_index;
+      }
+      value.value = FIB_SET_VALUE(new_srccount, dflt_adj);
+      clib_bihash_add_del_24_8(&im->ip6_lookup_table, &kv, 1 /* is_add */);
     }
 
   /* Avoid spurious reference count increments */
@@ -291,6 +378,8 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
 			    u32 flags,
 			    ip6_address_t * dst_address,
 			    u32 dst_address_length,
+			    ip6_address_t * src_address,
+			    u32 src_address_length,
 			    ip6_address_t * next_hop,
 			    u32 next_hop_sw_if_index,
 			    u32 next_hop_weight, u32 adj_index,
@@ -300,7 +389,7 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
   ip_lookup_main_t * lm = &im->lookup_main;
   u32 fib_index;
   ip6_fib_t * fib;
-  ip6_address_t masked_dst_address;
+  ip6_address_t masked_dst_address, masked_src_address;
   u32 old_mp_adj_index, new_mp_adj_index;
   u32 dst_adj_index, nh_adj_index;
   int rv;
@@ -310,7 +399,7 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
   int is_interface_next_hop;
   clib_error_t * error = 0;
   uword * nh_result;
-  BVT(clib_bihash_kv) kv, value;
+  clib_bihash_kv_40_8_t kv, value;
 
   vlib_smp_unsafe_warning();
 
@@ -349,9 +438,11 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
           /* Look for the interface /128 route */
           kv.key[0] = next_hop->as_u64[0];
           kv.key[1] = next_hop->as_u64[1];
-          kv.key[2] = ((u64)((fib - im->fibs))<<32) | 128;
+          kv.key[2] = 0;
+          kv.key[3] = 0;
+          kv.key[4] = ((u64)((fib - im->fibs))<<32) | 128;
 
-          if (BV(clib_bihash_search)(&im->ip6_lookup_table, &kv, &value) < 0)
+          if (clib_bihash_search_40_8(&im->ip6_srclookup_table, &kv, &value) < 0)
             {
               vnm->api_errno = VNET_API_ERROR_UNKNOWN_DESTINATION;
               error = clib_error_return (0, "next-hop %U/128 not in FIB",
@@ -365,11 +456,13 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
   else
     {
       /* Look for the interface /128 route */
-      kv.key[0] = next_hop->as_u64[0];
-      kv.key[1] = next_hop->as_u64[1];
-      kv.key[2] = ((u64)((fib - im->fibs))<<32) | 128;
-      
-      if (BV(clib_bihash_search)(&im->ip6_lookup_table, &kv, &value) < 0)
+    kv.key[0] = next_hop->as_u64[0];
+    kv.key[1] = next_hop->as_u64[1];
+    kv.key[2] = 0;
+    kv.key[3] = 0;
+    kv.key[4] = ((u64)((fib - im->fibs))<<32) | 128;
+
+      if (clib_bihash_search_40_8(&im->ip6_srclookup_table, &kv, &value) < 0)
         {
           vnm->api_errno = VNET_API_ERROR_UNKNOWN_DESTINATION;
           error = clib_error_return (0, "next-hop %U/128 not in FIB",
@@ -384,11 +477,18 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
   masked_dst_address = dst_address[0];
   ip6_address_mask (&masked_dst_address, &im->fib_masks[dst_address_length]);
 
+  ASSERT (src_address_length < ARRAY_LEN (im->fib_masks));
+  masked_src_address = src_address[0];
+  ip6_address_mask (&masked_src_address, &im->fib_masks[src_address_length]);
+
   kv.key[0] = masked_dst_address.as_u64[0];
   kv.key[1] = masked_dst_address.as_u64[1];
-  kv.key[2] = ((u64)((fib - im->fibs))<<32) | dst_address_length;
+  kv.key[2] = masked_src_address.as_u64[0];
+  kv.key[3] = masked_src_address.as_u64[1];
+  kv.key[4] = ((u64)((fib - im->fibs))<<32) |
+      dst_address_length | (src_address_length << 8);
 
-  rv = BV(clib_bihash_search)(&im->ip6_lookup_table, &kv, &value);
+  rv = clib_bihash_search_40_8(&im->ip6_srclookup_table, &kv, &value);
 
   if (rv == 0)
     {
@@ -455,6 +555,8 @@ ip6_add_del_route_next_hop (ip6_main_t * im,
 		 | (flags & IP6_ROUTE_FLAG_NO_REDISTRIBUTE));
       a.dst_address = dst_address[0];
       a.dst_address_length = dst_address_length;
+      a.src_address = src_address[0];
+      a.src_address_length = src_address_length;
       a.adj_index = new_mp ? new_mp->adj_index : dst_adj_index;
       a.add_adj = 0;
       a.n_add_adj = 0;
@@ -665,9 +767,11 @@ ip6_lookup (vlib_main_t * vm,
             fib_index1 : vnet_buffer(p1)->sw_if_index[VLIB_TX];
 
 	  adj_index0 = ip6_fib_lookup_with_table (im, fib_index0, 
-                                                  &ip0->dst_address);
+                                                  &ip0->dst_address,
+                                                  &ip0->src_address);
 	  adj_index1 = ip6_fib_lookup_with_table (im, fib_index1, 
-                                                  &ip1->dst_address);
+                                                  &ip1->dst_address,
+                                                  &ip1->src_address);
 
 	  adj0 = ip_get_adjacency (lm, adj_index0);
 	  adj1 = ip_get_adjacency (lm, adj_index1);
@@ -675,13 +779,15 @@ ip6_lookup (vlib_main_t * vm,
           if (PREDICT_FALSE (adj0->explicit_fib_index != ~0))
             {
               adj_index0 = ip6_fib_lookup_with_table 
-                (im, adj0->explicit_fib_index, &ip0->dst_address);
+                (im, adj0->explicit_fib_index,
+                 &ip0->dst_address, &ip0->src_address);
               adj0 = ip_get_adjacency (lm, adj_index0);
             }
           if (PREDICT_FALSE (adj1->explicit_fib_index != ~0))
             {
               adj_index1 = ip6_fib_lookup_with_table 
-                (im, adj1->explicit_fib_index, &ip1->dst_address);
+                (im, adj1->explicit_fib_index,
+                 &ip1->dst_address, &ip1->src_address);
               adj1 = ip_get_adjacency (lm, adj_index1);
             }
 
@@ -797,14 +903,16 @@ ip6_lookup (vlib_main_t * vm,
               vec_elt_at_index (im->fibs,fib_index0)->flow_hash_config;
 
 	  adj_index0 = ip6_fib_lookup_with_table (im, fib_index0, 
-                                                  &ip0->dst_address);
+                                                  &ip0->dst_address,
+                                                  &ip0->src_address);
 
 	  adj0 = ip_get_adjacency (lm, adj_index0);
 
           if (PREDICT_FALSE (adj0->explicit_fib_index != ~0))
             {
               adj_index0 = ip6_fib_lookup_with_table 
-                (im, adj0->explicit_fib_index, &ip0->dst_address);
+                (im, adj0->explicit_fib_index,
+                 &ip0->dst_address, &ip0->src_address);
               adj0 = ip_get_adjacency (lm, adj_index0);
             }
 
@@ -2401,10 +2509,22 @@ ip6_lookup_init (vlib_main_t * vm)
   if (im->lookup_table_size == 0)
     im->lookup_table_size = IP6_FIB_DEFAULT_HASH_MEMORY_SIZE;
   
-  BV(clib_bihash_init) (&im->ip6_lookup_table, "ip6 lookup table",
+  clib_bihash_init_24_8 (&im->ip6_lookup_table, "ip6 lookup table",
                         im->lookup_table_nbuckets,
                         im->lookup_table_size);
   
+  if (im->srclookup_table_nbuckets == 0)
+      im->srclookup_table_nbuckets = IP6_FIB_DEFAULT_HASH_NUM_BUCKETS;
+
+    im->srclookup_table_nbuckets = 1<< max_log2 (im->srclookup_table_nbuckets);
+
+    if (im->srclookup_table_size == 0)
+      im->srclookup_table_size = IP6_FIB_DEFAULT_HASH_MEMORY_SIZE;
+
+  clib_bihash_init_40_8 (&im->ip6_srclookup_table, "ip6 src-lookup table",
+                          im->srclookup_table_nbuckets,
+                          im->srclookup_table_size);
+
   /* Create FIB with index 0 and table id of 0. */
   find_ip6_fib_by_table_index_or_id (im, /* table id */ 0, IP6_ROUTE_FLAG_TABLE_ID);
 

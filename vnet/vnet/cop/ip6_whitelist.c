@@ -61,6 +61,7 @@ ip6_cop_whitelist_node_fn (vlib_main_t * vm,
   ip_lookup_main_t * lm6 = &im6->lookup_main;
   vlib_combined_counter_main_t * vcm = &im6->lookup_main.adjacency_counters;
   u32 cpu_index = vm->cpu_index;
+  ip6_address_t zero_address = {}; //FIXME
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -121,7 +122,7 @@ ip6_cop_whitelist_node_fn (vlib_main_t * vm,
                sizeof (c0[0]));
 
           adj_index0 = ip6_fib_lookup_with_table (im6, c0->fib_index, 
-                                                  &ip0->src_address);
+                                                  &ip0->src_address, &zero_address);
 	  adj0 = ip_get_adjacency (lm6, adj_index0);
           if (PREDICT_FALSE(adj0->lookup_next_index != IP_LOOKUP_NEXT_LOCAL))
             {
@@ -143,7 +144,7 @@ ip6_cop_whitelist_node_fn (vlib_main_t * vm,
                sizeof (c1[0]));
 
           adj_index1 = ip6_fib_lookup_with_table (im6, c1->fib_index, 
-                                                  &ip1->src_address);
+                                                  &ip1->src_address, &zero_address);
 
 	  adj1 = ip_get_adjacency (lm6, adj_index1);
 
@@ -227,7 +228,7 @@ ip6_cop_whitelist_node_fn (vlib_main_t * vm,
                sizeof (c0[0]));
 
           adj_index0 = ip6_fib_lookup_with_table (im6, c0->fib_index, 
-                                                  &ip0->src_address);
+                                                  &ip0->src_address, &zero_address);
 
 	  adj0 = ip_get_adjacency (lm6, adj_index0);
 

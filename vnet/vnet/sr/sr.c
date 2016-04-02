@@ -2012,7 +2012,8 @@ set_ip6_sr_rewrite_fn (vlib_main_t * vm,
       fib_index = p[0];
     }
 
-  adj_index = ip6_fib_lookup_with_table (im, fib_index, &a);
+  ip6_address_t zero_address = {}; //FIXME
+  adj_index = ip6_fib_lookup_with_table (im, fib_index, &a, &zero_address);
 
   if (adj_index == lm->miss_adj_index)
     return clib_error_return (0, "no match for %U", 

@@ -1006,6 +1006,7 @@ static int ip6_add_del_route_t_handler (vl_api_ip_add_del_route_t *mp)
     ip6_address_t next_hop_address;
     pending_route_t * pr;
     vl_api_ip_add_del_route_t * adr;
+    ip6_address_t zero_address = {}; //FIXME
 
     u32 fib_index;
     uword * p;
@@ -1041,8 +1042,9 @@ static int ip6_add_del_route_t_handler (vl_api_ip_add_del_route_t *mp)
         u32 lookup_result;
         ip_adjacency_t * adj;
 
+        ip6_address_t zero_address = {}; //FIXME
         lookup_result = ip6_fib_lookup_with_table 
-            (im, fib_index, &next_hop_address);
+            (im, fib_index, &next_hop_address, &zero_address);
 
         adj = ip_get_adjacency (lm, lookup_result);
 
@@ -1089,6 +1091,7 @@ static int ip6_add_del_route_t_handler (vl_api_ip_add_del_route_t *mp)
 
         ip6_add_del_route_next_hop (im, flags, (ip6_address_t *)mp->dst_address,
                                     (u32) mp->dst_address_length,
+                                    &zero_address, 0,
                                     (ip6_address_t *)mp->next_hop_address,
                                     ntohl(mp->next_hop_sw_if_index),
                                     (u32) mp->next_hop_weight, 
@@ -1121,7 +1124,7 @@ static int ip6_add_del_route_t_handler (vl_api_ip_add_del_route_t *mp)
             ai = lm->local_adj_index;
         else {
             ai = ip6_fib_lookup_with_table 
-                (im, fib_index, &next_hop_address);
+                (im, fib_index, &next_hop_address, &zero_address);
             if (ai == lm->miss_adj_index) {
                 dsunlock(sm);
                 return VNET_API_ERROR_NEXT_HOP_NOT_IN_FIB;
@@ -1144,7 +1147,7 @@ static int ip6_add_del_route_t_handler (vl_api_ip_add_del_route_t *mp)
         ip_adjacency_t * adj;
         
         ai = ip6_fib_lookup_with_table 
-            (im, fib_index, &a.dst_address);
+            (im, fib_index, &a.dst_address, &a.src_address);
         if (ai == lm->miss_adj_index) {
             dsunlock(sm);
             return VNET_API_ERROR_UNKNOWN_DESTINATION;
