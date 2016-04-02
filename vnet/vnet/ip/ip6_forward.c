@@ -109,8 +109,8 @@ ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index,
       if (rv != 0)
         continue;
 
-      if (FIB_GET_SRCCOUNT(value.value) == 1
-          && FIB_GET_ADJINDEX(value.value) != ~0)
+      if (PREDICT_TRUE(FIB_GET_SRCCOUNT(value.value) == 1
+          && FIB_GET_ADJINDEX(value.value) != ~0))
         return FIB_GET_ADJINDEX(value.value);
 
       kv2.key[0] = dst->as_u64[0] & mask->as_u64[0];
