@@ -364,6 +364,7 @@ vnet_set_ip6_ethernet_neighbor (vlib_main_t * vm,
       args.flags = IP6_ROUTE_FLAG_FIB_INDEX | IP6_ROUTE_FLAG_ADD | IP6_ROUTE_FLAG_NEIGHBOR;
       args.dst_address = a[0];
       args.dst_address_length = 128;
+      args.src_address_length = 0;
       args.adj_index = ~0;
       args.add_adj = &adj;
       args.n_add_adj = 1;

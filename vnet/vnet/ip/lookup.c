@@ -2071,9 +2071,9 @@ VLIB_CLI_COMMAND (ip4_show_fib_command, static) = {
 
 typedef struct {
   ip6_address_t address;
-
   u32 address_length;
-
+  ip6_address_t src_address;
+  u32 src_length;
   u32 index;
 } ip6_route_t;
 
@@ -2082,18 +2082,20 @@ typedef struct {
   ip6_route_t ** routep;
 } add_routes_in_fib_arg_t;
 
-static void add_routes_in_fib (BVT(clib_bihash_kv) * kvp, void *arg)
+static void add_routes_in_fib (clib_bihash_kv_40_8_t * kvp, void *arg)
 {
   add_routes_in_fib_arg_t * ap = arg;
 
-  if (kvp->key[2]>>32 == ap->fib_index)
+  if (kvp->key[4]>>32 == ap->fib_index)
     {
       ip6_address_t *addr;
       ip6_route_t * r;
       addr = (ip6_address_t *) kvp;
       vec_add2 (*ap->routep, r, 1);
       r->address = addr[0];
-      r->address_length = kvp->key[2] & 0xFF;
+      r->address_length = kvp->key[4] & 0xFF;
+      r->src_address = addr[1];
+      r->src_length = (kvp->key[4] & 0xFF00) >> 8;
       r->index = kvp->value;
     }
 }
@@ -2104,15 +2106,15 @@ typedef struct {
 } count_routes_in_fib_at_prefix_length_arg_t;
 
 static void count_routes_in_fib_at_prefix_length 
-(BVT(clib_bihash_kv) * kvp, void *arg)
+(clib_bihash_kv_40_8_t * kvp, void *arg)
 {
   count_routes_in_fib_at_prefix_length_arg_t * ap = arg;
   int mask_width;
 
-  if ((kvp->key[2]>>32) != ap->fib_index)
+  if ((kvp->key[4]>>32) != ap->fib_index)
     return;
 
-  mask_width = kvp->key[2] & 0xFF;
+  mask_width = kvp->key[4] & 0xFF;
 
   ap->count_by_prefix_length[mask_width]++;
 }
@@ -2123,8 +2125,20 @@ ip6_route_cmp (void * a1, void * a2)
   ip6_route_t * r1 = a1;
   ip6_route_t * r2 = a2;
 
-  int cmp = ip6_address_compare (&r1->address, &r2->address);
-  return cmp ? cmp : ((int) r1->address_length - (int) r2->address_length);
+  int cmp;
+  if ((cmp = ip6_address_compare (&r1->address, &r2->address)))
+    return cmp;
+
+  if ((cmp = (((int) r1->address_length - (int) r2->address_length))))
+    return cmp;
+
+  if ((cmp = ip6_address_compare (&r1->src_address, &r2->src_address)))
+    return cmp;
+
+  if ((cmp = (((int) r1->src_length - (int) r2->src_length))))
+    return cmp;
+
+  return 0;
 }
 
 static clib_error_t *
@@ -2137,7 +2151,7 @@ ip6_show_fib (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * c
   ip_lookup_main_t * lm = &im6->lookup_main;
   uword * results;
   int verbose;
-  BVT(clib_bihash) * h = &im6->ip6_lookup_table;
+  clib_bihash_40_8_t *h = &im6->ip6_srclookup_table;
   __attribute__((unused)) u8 clear = 0;
   add_routes_in_fib_arg_t _a, *a=&_a;
   count_routes_in_fib_at_prefix_length_arg_t _ca, *ca = &_ca;
@@ -2172,7 +2186,7 @@ ip6_show_fib (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * c
           memset (ca, 0, sizeof(*ca));
           ca->fib_index = fib - im6->fibs;
 
-          BV(clib_bihash_foreach_key_value_pair)
+          clib_bihash_foreach_key_value_pair_40_8
             (h, count_routes_in_fib_at_prefix_length, ca);
 
           for (len = 128; len >= 0; len--)
@@ -2192,12 +2206,12 @@ ip6_show_fib (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * c
       a->fib_index = fib - im6->fibs;
       a->routep = &routes;
 
-      BV(clib_bihash_foreach_key_value_pair)(h, add_routes_in_fib, a);
+      clib_bihash_foreach_key_value_pair_40_8(h, add_routes_in_fib, a);
       
       vec_sort_with_function (routes, ip6_route_cmp);
 
-      vlib_cli_output (vm, "%=45s%=16s%=16s%=16s",
-		       "Destination", "Packets", "Bytes", "Adjacency");
+      vlib_cli_output (vm, "%=45s%=45s%=16s%=16s%=16s",
+		       "Destination", "Source", "Packets", "Bytes", "Adjacency");
       vec_foreach (r, routes)
 	{
 	  vlib_counter_t c, sum;
@@ -2251,6 +2265,9 @@ ip6_show_fib (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * c
 		  else
 		    msg = format (msg, "%U", format_white_space, 20);
 
+		  msg = format (msg, "%-45U",
+                                format_ip6_address_and_length,
+                                r->src_address.as_u8, r->src_length);
 		  msg = format (msg, "%16Ld%16Ld ", sum.packets, sum.bytes);
 
 		  indent = vec_len (msg);

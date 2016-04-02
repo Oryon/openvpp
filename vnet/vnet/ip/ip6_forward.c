@@ -55,24 +55,28 @@
 
 static void compute_prefix_lengths_in_search_order (ip6_main_t * im)
 {
+  //clib_warning("Rebuilding dst lengths");
   int i;
   vec_reset_length (im->prefix_lengths_in_search_order);
   /* Note: bitmap reversed so this is in fact a longest prefix match */
   clib_bitmap_foreach (i, im->non_empty_dst_address_length_bitmap,
   ({
     int dst_address_length = 128 - i;
+    //clib_warning("Len %d is present", dst_address_length);
     vec_add1 (im->prefix_lengths_in_search_order, dst_address_length);
   }));
 }
 
 static void compute_srcprefix_lengths_in_search_order (ip6_main_t * im)
 {
+  //clib_warning("Rebuilding src lengths");
   int i;
   vec_reset_length (im->srcprefix_lengths_in_search_order);
   /* Note: bitmap reversed so this is in fact a longest prefix match */
   clib_bitmap_foreach (i, im->non_empty_src_address_length_bitmap,
   ({
     int src_address_length = 128 - i;
+    //clib_warning("Len %d is present", src_address_length);
     vec_add1 (im->srcprefix_lengths_in_search_order, src_address_length);
   }));
 }
@@ -113,8 +117,9 @@ ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index,
       kv2.key[1] = dst->as_u64[1] & mask->as_u64[1];
 
       for (j = 0; j < srclen; j++) {
-        int src_address_length = im->srcprefix_lengths_in_search_order[i];
+        int src_address_length = im->srcprefix_lengths_in_search_order[j];
         mask = &im->fib_masks[src_address_length];
+        //clib_warning("Trying with source length %d", src_address_length);
 
         ASSERT(src_address_length >= 0 && src_address_length <= 128);
 
@@ -314,6 +319,7 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
   kv.key[0] = dst_address.as_u64[0];
   kv.key[1] = dst_address.as_u64[1];
   kv.key[2] = ((u64)((fib - im->fibs))<<32) | dst_address_length;
+  //clib_warning("dst key is %U", format_bihash_kvp_24_8, &kv);
 
   kv2.key[0] = dst_address.as_u64[0];
   kv2.key[1] = dst_address.as_u64[1];
@@ -321,6 +327,7 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
   kv2.key[3] = src_address.as_u64[1];
   kv2.key[4] = ((u64)((fib - im->fibs))<<32) |
       dst_address_length | (src_address_length << 8);
+  //clib_warning("srcdst key is %U", format_bihash_kvp_40_8, &kv2);
 
   if (clib_bihash_search_40_8(&im->ip6_srclookup_table, &kv2, &value2) == 0)
       old_adj_index = value2.value;
@@ -330,11 +337,13 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
     clib_bihash_add_del_40_8(&im->ip6_srclookup_table, &kv2, 0 /* is_add */);
 
     //Find and decrement refcount of dst-only-entry
-    ASSERT(clib_bihash_search_24_8(&im->ip6_lookup_table, &kv, &value) == 0);
+    clib_bihash_search_24_8(&im->ip6_lookup_table, &kv, &value);
+    //clib_warning("DEL: %p dst lookup key %U value %U", &im->ip6_lookup_table, format_bihash_kvp_24_8, &kv, format_bihash_kvp_24_8, &value);
     u32 new_srccount = FIB_GET_SRCCOUNT(value.value) - 1;
     u32 dflt_adj = FIB_GET_ADJINDEX(value.value);
+    //clib_warning("DEL: New src count: %d dflt adjacency: %d", new_srccount, dflt_adj);
 
-    value.value = FIB_SET_VALUE(new_srccount, src_address_length ? dflt_adj : ~0);
+    kv.value = FIB_SET_VALUE(new_srccount, src_address_length ? dflt_adj : ~0);
     clib_bihash_add_del_24_8(&im->ip6_lookup_table, &kv, !!new_srccount /* is_add */);
   }
   else
@@ -343,16 +352,22 @@ void ip6_add_del_route (ip6_main_t * im, ip6_add_del_route_args_t * a)
       if (CLIB_DEBUG > 0)
         (void) ip_get_adjacency (lm, adj_index);
 
+      int add = 0;
+      if (clib_bihash_search_40_8(&im->ip6_srclookup_table, &kv2, &value2) != 0)
+        add = 1;
+
       kv2.value = adj_index;
       clib_bihash_add_del_40_8(&im->ip6_srclookup_table, &kv2, 1);
 
       u32 new_srccount = 1;
       u32 dflt_adj = src_address_length ? ~0: adj_index;
       if (clib_bihash_search_24_8(&im->ip6_lookup_table, &kv, &value) == 0) {
-        new_srccount = FIB_GET_SRCCOUNT(value.value) + 1;
+        new_srccount = FIB_GET_SRCCOUNT(value.value) + add;
         dflt_adj = src_address_length ? FIB_GET_ADJINDEX(value.value) : adj_index;
       }
-      value.value = FIB_SET_VALUE(new_srccount, dflt_adj);
+      //clib_warning("ADD: %p dst lookup key %U value %U", &im->ip6_lookup_table, format_bihash_kvp_24_8, &kv, format_bihash_kvp_24_8, &value);
+      //clib_warning("ADD: New src count: %d dflt adjacency: %d", new_srccount, dflt_adj);
+      kv.value = FIB_SET_VALUE(new_srccount, dflt_adj);
       clib_bihash_add_del_24_8(&im->ip6_lookup_table, &kv, 1 /* is_add */);
     }
 
@@ -2500,6 +2515,9 @@ ip6_lookup_init (vlib_main_t * vm)
     }
 
   ip_lookup_init (&im->lookup_main, /* is_ip6 */ 1);
+
+  im->prefix_lengths_in_search_order = 0;
+  im->srcprefix_lengths_in_search_order = 0;
 
   if (im->lookup_table_nbuckets == 0)
     im->lookup_table_nbuckets = IP6_FIB_DEFAULT_HASH_NUM_BUCKETS;

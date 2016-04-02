@@ -189,6 +189,7 @@ int BV(clib_bihash_add_del)
       BVT(clib_bihash_kv) * add_v,
       int is_add)
 {
+  //clib_warning("is_add=%d on %p with key %U", is_add, h, BV(format_bihash_kvp), add_v);
   u32 bucket_index;
   clib_bihash_bucket_t * b, tmp_b;
   BVT(clib_bihash_value) * v, * new_v, * save_new_v, * working_copy;
@@ -329,6 +330,7 @@ int BV(clib_bihash_search)
       BVT(clib_bihash_kv) *search_key,
       BVT(clib_bihash_kv) *valuep)
 {
+  //clib_warning("search on %p with key %U", h, BV(format_bihash_kvp), search_key);
   u64 hash;
   u32 bucket_index;
   uword value_index;
