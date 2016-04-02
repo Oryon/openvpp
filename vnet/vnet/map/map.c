@@ -17,7 +17,7 @@
 
 #include "map.h"
 
-#ifndef __SSE4_2__
+#if __SSE4_2__
 #include <vppinfra/xxhash.h>
 
 static inline u32

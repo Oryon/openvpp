@@ -43,6 +43,10 @@
 #include <vnet/srp/srp.h>	/* for srp_hw_interface_class */
 #include <vppinfra/cache.h>
 
+#include <vppinfra/bihash_40_8.h>
+#include <vppinfra/bihash_template.c>
+
+#include <vppinfra/bihash_24_8.h>
 #include <vppinfra/bihash_template.c>
 
 static void compute_prefix_lengths_in_search_order (ip6_main_t * im)

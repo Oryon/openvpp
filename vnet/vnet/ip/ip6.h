@@ -44,8 +44,8 @@
 #include <vnet/ip/ip6_packet.h>
 #include <vnet/ip/lookup.h>
 
+#include <vppinfra/bihash_40_8.h>
 #include <vppinfra/bihash_24_8.h>
-#include <vppinfra/bihash_template.h>
 
 /*
  * Default size of the ip6 fib hash table
