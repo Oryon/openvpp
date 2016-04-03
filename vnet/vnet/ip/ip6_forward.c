@@ -1033,6 +1033,8 @@ ip6_add_interface_routes (vnet_main_t * vnm, u32 sw_if_index,
 	     | IP6_ROUTE_FLAG_NO_REDISTRIBUTE);
   x.dst_address = address[0];
   x.dst_address_length = a->address_length;
+  x.src_address_length = 0; /* Interface address don't have sources */
+
   x.n_add_adj = 0;
   x.add_adj = 0;
 
