@@ -48,34 +48,24 @@ def generate_best_case_packets(path):
 	wrpcap(path + "_best.pcap",pkt)
 
 def generate_worse_case_packets(path):
-	src_prefix = ipaddress.IPv6Network(config['src_prefix'] + '/' + str(config['src_plen_min']), strict=False)
-	src_address = src_prefix.network_address.compressed
-	dst_prefix = ipaddress.IPv6Network(config['dst_prefix'] + '/' + str(config['dst_plen_min']), strict=False)
-	dst_address = dst_prefix.network_address.compressed
+	src_address = flip_bit_in_address(config['src_prefix'], config['src_plen_min'])
+	dst_address = flip_bit_in_address(config['dst_prefix'], config['dst_plen_min'])
 	pkt = Ether(dst=config['next_hop_mac']) / IPv6(src = src_address, dst = dst_address) / UDP(dport=40, sport=RandShort())
 	wrpcap(path + "_worse.pcap",pkt)
 
-def random_address(prefix, plen):
+def flip_bit_in_address(prefix, plen):
 	addr_as_int = int(ipaddress.IPv6Address(prefix))
-	print("Prefix", prefix, ", plen ", plen, ", addr_as_int", addr_as_int)
 	if plen < 128:
 		# need to flip the bit at plen + 1 to ensure that this address is not part of a longer prefix
-		bit_to_flip = 1 << (128 - plen)
+		bit_to_flip = 1 << (128 - plen - 1)
 		addr_as_int = addr_as_int ^ bit_to_flip
-	print(ipaddress.IPv6Address(addr_as_int).compressed)
 	return ipaddress.IPv6Address(addr_as_int).compressed
 
-#
-# Could be tricky as the src/dst should be random in the plen but must not be in the plen+1
-# Random bits on the right + if member of the longer prefix then flip the plen bit?
-
 def generate_random_packets(path):
-	print("Not implemented yet") 
 	pkts = []
 	for i in range(config['random_packet_count']):
-		print(i)
-		dst_address = random_address(config['dst_prefix'], random.randint(config['dst_plen_min'], config['dst_plen_max']))
-		src_address = random_address(config['src_prefix'], random.randint(config['src_plen_min'], config['src_plen_max']))
+		dst_address = flip_bit_in_address(config['dst_prefix'], random.randint(config['dst_plen_min'], config['dst_plen_max']))
+		src_address = flip_bit_in_address(config['src_prefix'], random.randint(config['src_plen_min'], config['src_plen_max']))
 		pkt = Ether(dst=config['next_hop_mac']) / IPv6(src = src_address, dst = dst_address) / UDP(dport=40, sport=RandShort())
 		pkts.append(pkt)
 	wrpcap(path + "_random.pcap",pkts)
