@@ -34,9 +34,9 @@ def generate_cli(path):
 	"""
 	conf_file = open(path + '.conf', "w")
 	for src_plen in range(config['src_plen_min'], config['src_plen_max'] + 1, config['src_plen_inc']):
-		print("ip route add", dst_prefix.compressed + "/" + str(config['dst_plen_max']), "from", ipaddress.IPv6Network(config['src_prefix'] + '/' + str(src_plen), strict= False), "via", config['gw'], file=conf_file)
+		print("ip route add", dst_prefix.compressed + "/" + str(config['dst_plen_max']), "from", ipaddress.IPv6Network(config['src_prefix'] + '/' + str(src_plen), strict= False), "via", config['gw'], config['gw_interface'], file=conf_file)
 	for dst_plen in range(config['dst_plen_min'], config['dst_plen_max'] + 1, config['dst_plen_inc']):
-		print("ip route add", ipaddress.IPv6Network(config['dst_prefix'] + '/' + str(dst_plen), strict= False), "from", src_prefix.compressed + '/' + str(config['src_plen_max']), "via", config['gw'], file=conf_file)
+		print("ip route add", ipaddress.IPv6Network(config['dst_prefix'] + '/' + str(dst_plen), strict= False), "from", src_prefix.compressed + '/' + str(config['src_plen_max']), "via", config['gw'], config['gw_interface'], file=conf_file)
 	conf_file.close()
 
 def generate_best_case_packets(path):

@@ -8,6 +8,7 @@
 	"dst_plen_max": 128,
 	"dst_plen_inc": 1,
 	"gw": "fe80::1",
+	"gw_interface": "tap-0",
 	"next_hop_mac": "08:00:27:15:54:95",
 	"random_packet_count": 10
 }
