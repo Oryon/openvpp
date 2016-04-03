@@ -109,7 +109,7 @@ ip6_fib_lookup_with_table (ip6_main_t * im, u32 fib_index,
       if (rv != 0)
         continue;
 
-      if (PREDICT_TRUE(FIB_GET_SRCCOUNT(value.value) == 1
+      if (PREDICT_TRUE(FIB_GET_SRCCOUNT(value.value) == 0
           && FIB_GET_ADJINDEX(value.value) != ~0))
         return FIB_GET_ADJINDEX(value.value);
 
