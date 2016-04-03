@@ -1,0 +1,13 @@
+{
+	"src_prefix": "fd12:3456:789a:bcde:f012:3456:789a:bcde",
+	"src_plen_min": 3,
+	"src_plen_max": 128,
+	"src_plen_inc": 1,
+	"dst_prefix": "2001:db8:cafe:babe:dead:beef:c5c0:1234",
+	"dst_plen_min": 3,
+	"dst_plen_max": 128,
+	"dst_plen_inc": 1,
+	"gw": "fe80::1",
+	"next_hop_mac": "08:00:27:15:54:95",
+	"random_packet_count": 10
+}
