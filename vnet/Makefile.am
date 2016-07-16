@@ -654,6 +654,15 @@ libvnet_la_SOURCES +=				\
 nobase_include_HEADERS +=			\
   vnet/devices/netmap/netmap.h
 
+########################################
+# ILA
+########################################
+
+libvnet_la_SOURCES +=				\
+  vnet/ila/ila.c
+
+nobase_include_HEADERS +=			\
+  vnet/ila/ila.h
 
 ########################################
 # Unix kernel related
