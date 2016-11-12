@@ -27,6 +27,12 @@ typedef enum {
   NSHSFDEV_N_NEXT,
 } nshsfdev_next_t;
 
+typedef enum {
+  NSHSFDEV_TX_NEXT_NSH,
+  NSHSFDEV_TX_NEXT_DROP,
+  NSHSFDEV_TX_N_NEXT,
+} nshsfdev_tx_next_t;
+
 clib_error_t *
 vlib_plugin_register (vlib_main_t * vm, vnet_plugin_handoff_t * h,
 		      int from_early_init)
@@ -62,9 +68,85 @@ static int nshsfdev_api_user_unregister(int user_index)
   return 0;
 }
 
+typedef struct {
+  u32 next_index;
+} nshsfdev_tx_trace_t;
+
+static u8 *
+format_nshsfdev_tx_trace (u8 * s, va_list * args)
+{
+  CLIB_UNUSED (vlib_main_t * vm) = va_arg (*args, vlib_main_t *);
+  CLIB_UNUSED (vlib_node_t * node) = va_arg (*args, vlib_node_t *);
+  nshsfdev_tx_trace_t *t = va_arg (*args, nshsfdev_tx_trace_t *);
+  return format (s, "%s", (t->next_index==NSHSFDEV_TX_NEXT_NSH)?
+      "tx":"drop");
+}
+
+
+static uword
+nshsfdev_tx_fn (CLIB_UNUSED(vlib_main_t * vm),
+                CLIB_UNUSED(vlib_node_runtime_t * node),
+                CLIB_UNUSED(vlib_frame_t * frame))
+{
+  return 0;
+}
+
+/** *INDENT-OFF* */
+// This node is only used for tracing.
+// The node function is never called.
+VLIB_REGISTER_NODE (nshsfdev_tx, static) =
+{
+  .function = nshsfdev_tx_fn,
+  .name = "nshsfdev-tx",
+  .vector_size = sizeof (u32),
+  .format_trace = format_nshsfdev_tx_trace,
+  .n_errors = 0,
+  .error_strings = 0,
+  .n_next_nodes = NSHSFDEV_TX_N_NEXT,
+  .next_nodes =
+  {
+	  [NSHSFDEV_TX_NEXT_NSH] = "nsh-input",
+	  [NSHSFDEV_TX_NEXT_DROP] = "error-drop",
+  },
+};
+/** *INDENT-ON* */
+
+static
+int nshsfdev_api_tx_next(nshsfdev_packet_t *packet, u32 next_index)
+{
+  vlib_buffer_t * p0 = (vlib_buffer_t *)packet->vpp_opaque;
+  vlib_main_t * vm = vlib_get_main();
+  vlib_node_runtime_t * node = vlib_node_get_runtime(vm, nshsfdev_tx.index);
+
+  if (PREDICT_FALSE(p0->flags & VLIB_BUFFER_IS_TRACED))
+    {
+      nshsfdev_tx_trace_t *tr = vlib_add_trace(vm, node, p0, sizeof(*tr));
+      tr->next_index = next_index;
+    }
+
+  vlib_set_next_frame_buffer (vm, node, next_index, vlib_get_buffer_index(vm, p0));
+  return 0;
+}
+
+static
+int nshsfdev_api_tx(nshsfdev_packet_t *packet)
+{
+  return nshsfdev_api_tx_next(packet, NSHSFDEV_TX_NEXT_NSH);
+}
+
+static
+int nshsfdev_api_free(nshsfdev_packet_t *packet)
+{
+  return nshsfdev_api_tx_next(packet, NSHSFDEV_TX_NEXT_DROP);
+}
+
+typedef struct {
+  u32 user_index;
+} nshsfdev_trace_t;
+
 static uword
 nshsfdev_fn (vlib_main_t * vm,
-	     vlib_node_runtime_t * node, vlib_frame_t * frame)
+             vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
   u32 n_left_from, *from;
   nshsfdev_main_t *nsm = &nshsfdev_main;
@@ -90,28 +172,38 @@ nshsfdev_fn (vlib_main_t * vm,
       packet0.vpp_opaque = (void *)p0;
 
       ui0 = vnet_buffer(p0)->sw_if_index[VLIB_TX];
-      if (PREDICT_FALSE(pool_is_free_index(nsm->users, ui0))) {
+
+      if (PREDICT_FALSE(p0->flags & VLIB_BUFFER_IS_TRACED))
+	{
+	  nshsfdev_trace_t *tr = vlib_add_trace(vm, node, p0, sizeof(*tr));
+	  tr->user_index = ui0;
+	}
+
+      if (PREDICT_FALSE(pool_is_free_index(nsm->users, ui0)))
+	{
 	  vlib_set_next_frame_buffer (vm, node, NSHSFDEV_NEXT_DROP, pi0);
-      } else {
+	} else {
 	  u0 = pool_elt_at_index(nsm->users, ui0);
-	  u0->rx(&packet0, u0->user_opaque);
-      }
+	  if (PREDICT_FALSE(u0->rx(u0->user_opaque, &packet0)))
+	    {
+	      vlib_set_next_frame_buffer (vm, node, NSHSFDEV_NEXT_DROP, pi0);
+	    }
+	}
     }
 
   return frame->n_vectors;
 }
 
-typedef struct {
-  u32 a;
-} nshsfdev_trace_t;
-
 u8 *
 format_nshsfdev_trace (u8 * s, va_list * args)
 {
+  nshsfdev_main_t *nsm = &nshsfdev_main;
   CLIB_UNUSED (vlib_main_t * vm) = va_arg (*args, vlib_main_t *);
   CLIB_UNUSED (vlib_node_t * node) = va_arg (*args, vlib_node_t *);
   nshsfdev_trace_t *t = va_arg (*args, nshsfdev_trace_t *);
-  return format (s, "nshsfdev_trace_t %d", t->a);
+  return format (s, "user [%d] %s", t->user_index,
+                 (pool_is_free_index(nsm->users, t->user_index))?"[NONE]":
+                     (pool_elt_at_index(nsm->users, t->user_index))->name);
 }
 
 /** *INDENT-OFF* */
@@ -158,6 +250,8 @@ int nshsfdev_load(u8 *sf_plugin_path)
   nshsfdev_api_register_t a = {
       .user_register = nshsfdev_api_user_register,
       .user_unregister = nshsfdev_api_user_unregister,
+      .tx = nshsfdev_api_tx,
+      .free = nshsfdev_api_free,
   };
   fp = register_handle;
   clib_warning("Calling with a = %p", &a);

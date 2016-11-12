@@ -3,7 +3,7 @@
 #define NSHFSDEV_API_H
 
 typedef struct {
-  char *data;
+  void *data;
   int data_len;
   int data_offset;
   void *vpp_opaque;
