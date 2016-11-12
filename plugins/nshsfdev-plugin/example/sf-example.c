@@ -7,7 +7,7 @@ static nshsfdev_api_register_t api;
 
 int sfdev_magic_init(nshsfdev_api_register_t *a) {
   api = *a;
-  nshfsdev_user_register_t u;
+  nshsfdev_user_register_t u;
     u.name = "sf-example";
     u.rx = 0;
     u.poll = 0;

@@ -58,12 +58,12 @@ PLUGIN_ENABLED(ioam)
 PLUGIN_ENABLED(snat)
 PLUGIN_ENABLED(ila)
 PLUGIN_ENABLED(lb)
-PLUGIN_DISABLED(flowperpkt)
+PLUGIN_ENABLED(flowperpkt)
+PLUGIN_ENABLED(nsh)
 
 # Disabled plugins, require --enable-XXX-plugin
 PLUGIN_DISABLED(vcgn)
 PLUGIN_DISABLED(sample)
-PLUGIN_ENABLED(nsh)
 PLUGIN_ENABLED(nshsfdev)
 
 AC_OUTPUT([Makefile])

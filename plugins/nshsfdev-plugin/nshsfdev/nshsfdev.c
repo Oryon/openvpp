@@ -1,5 +1,4 @@
 
-
 #include <nshsfdev/nshsfdev.h>
 
 #include <vnet/plugin/plugin.h>
@@ -37,24 +36,24 @@ vlib_plugin_register (vlib_main_t * vm, vnet_plugin_handoff_t * h,
 }
 
 typedef struct {
-  nshfsdev_user_register_t *users;
+  nshsfdev_user_register_t *users;
 } nshsfdev_main_t;
 
 nshsfdev_main_t nshsfdev_main;
 
 
-static int nshfsdev_api_user_register(nshfsdev_user_register_t * user,
+static int nshsfdev_api_user_register(nshsfdev_user_register_t * user,
 			       int *user_index)
 {
   nshsfdev_main_t *nsm = &nshsfdev_main;
-  nshfsdev_user_register_t *u;
+  nshsfdev_user_register_t *u;
   pool_get (nsm->users, u);
   *u = *user;
   *user_index = u - nsm->users;
   return 0;
 }
 
-static int nshfsdev_api_user_unregister(int user_index)
+static int nshsfdev_api_user_unregister(int user_index)
 {
   nshsfdev_main_t *nsm = &nshsfdev_main;
   if (!pool_is_free_index(nsm->users, user_index))
@@ -77,9 +76,9 @@ nshsfdev_fn (vlib_main_t * vm,
     {
       u32 pi0;
       vlib_buffer_t *p0;
-      nshfsdev_packet_t packet0;
+      nshsfdev_packet_t packet0;
       u32 ui0;
-      nshfsdev_user_register_t *u0;
+      nshsfdev_user_register_t *u0;
 
       pi0 = from[0];
       from++;
@@ -119,7 +118,7 @@ format_nshsfdev_trace (u8 * s, va_list * args)
 VLIB_REGISTER_NODE (nshsfdev_node, static) =
 {
   .function = nshsfdev_fn,
-  .name = "nshfsdev",
+  .name = "nshsfdev",
   .vector_size = sizeof (u32),
   .format_trace = format_nshsfdev_trace,
   .n_errors = NSHSFDEV_N_ERROR,
@@ -157,8 +156,8 @@ int nshsfdev_load(u8 *sf_plugin_path)
 
 
   nshsfdev_api_register_t a = {
-      .user_register = nshfsdev_api_user_register,
-      .user_unregister = nshfsdev_api_user_unregister,
+      .user_register = nshsfdev_api_user_register,
+      .user_unregister = nshsfdev_api_user_unregister,
   };
   fp = register_handle;
   clib_warning("Calling with a = %p", &a);
@@ -232,7 +231,7 @@ nshsf_show_users_command_fn (vlib_main_t * vm,
 		      unformat_input_t * input, vlib_cli_command_t * cmd)
 {
   nshsfdev_main_t *nsm = &nshsfdev_main;
-  nshfsdev_user_register_t *u;
+  nshsfdev_user_register_t *u;
   pool_foreach (u, nsm->users,
 		({
     vlib_cli_output (vm, "[%d] %s\n", u - nsm->users, u->name);
