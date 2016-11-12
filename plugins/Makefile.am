@@ -55,3 +55,11 @@ endif
 if ENABLE_flowperpkt_PLUGIN
 SUBDIRS += flowperpkt-plugin
 endif
+
+if ENABLE_nsh_PLUGIN
+SUBDIRS += nsh-plugin
+endif
+
+if ENABLE_nshsfdev_PLUGIN
+SUBDIRS += nshsfdev-plugin
+endif
