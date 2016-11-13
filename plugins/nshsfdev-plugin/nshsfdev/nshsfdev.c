@@ -152,6 +152,7 @@ int nshsfdev_api_tx_next(nshsfdev_packet_t *packet, u32 next_index)
     {
       nshsfdev_tx_trace_t *tr = vlib_add_trace(vm, node, p0, sizeof(*tr));
       tr->next_index = next_index;
+      vlib_trace_next_frame(vm, node, next_index);
     }
 
   vlib_set_next_frame_buffer (vm, node, next_index, vlib_get_buffer_index(vm, p0));

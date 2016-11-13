@@ -27,10 +27,12 @@ cat << EOF > $STARTUP
 exec $PG
 set interface mac address pg0 aa:aa:bb:bb:cc:cc
 nsh load $EXAMPLE_PLUGIN
+create loop interface mac aa:aa:bb:bb:cc:11
+set int state loop0 up
 create nsh entry nsp 10 nsi 1 md-type 1
 create nsh map nsp 10 nsi 1 mapped-nsp 10 mapped-nsi 1 nsh_action pop encap-other nshsfdev 0
 create nsh entry nsp 10 nsi 0 md-type 1
-create nsh map nsp 10 nsi 0 mapped-nsp 10 mapped-nsi 0 nsh_action pop encap-ethernet 1 aaaabbbbccccaaaabbbbcc00894f
+create nsh map nsp 10 nsi 0 mapped-nsp 10 mapped-nsi 0 nsh_action pop encap-ethernet 2 aaaabbbbccccaaaabbbbcc00894f
 trace add pg-input 1
 pack en
 EOF
