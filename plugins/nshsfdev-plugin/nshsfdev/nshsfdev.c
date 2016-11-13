@@ -48,6 +48,33 @@ typedef struct {
 nshsfdev_main_t nshsfdev_main;
 
 
+static uword
+nshsfdev_poll_fn (CLIB_UNUSED(vlib_main_t * vm),
+             CLIB_UNUSED(vlib_node_runtime_t * node),
+             CLIB_UNUSED(vlib_frame_t * frame))
+{
+  nshsfdev_main_t *nsm = &nshsfdev_main;
+  nshsfdev_user_register_t *u;
+  pool_foreach(u, nsm->users, {
+      if (u->poll)
+	u->poll(u->user_opaque);
+  });
+  return 0;
+}
+
+/** *INDENT-OFF* */
+VLIB_REGISTER_NODE (nshsfdev_poll_node, static) =
+{
+  .type = VLIB_NODE_TYPE_INPUT,
+  .state = VLIB_NODE_STATE_DISABLED,
+  .function = nshsfdev_poll_fn,
+  .name = "nshsfdev-poll",
+  .vector_size = sizeof (u32),
+  .n_errors = 0,
+  .n_next_nodes = 0,
+};
+/** *INDENT-ON* */
+
 static int nshsfdev_api_user_register(nshsfdev_user_register_t * user,
 			       int *user_index)
 {
@@ -56,6 +83,9 @@ static int nshsfdev_api_user_register(nshsfdev_user_register_t * user,
   pool_get (nsm->users, u);
   *u = *user;
   *user_index = u - nsm->users;
+  vlib_node_set_state (vlib_mains ? vlib_mains[0] : &vlib_global_main,
+      nshsfdev_poll_node.index,
+      VLIB_NODE_STATE_POLLING);
   return 0;
 }
 
@@ -346,7 +376,14 @@ VLIB_CLI_COMMAND (nshsf_show_users_command, static) =
 clib_error_t *nsh_init (vlib_main_t *vm)
 {
   nshsfdev_main_t *nsm = &nshsfdev_main;
+  vlib_node_t * nsh_sfc_node = 0;
   nsm->users = 0;
+  nsh_sfc_node = vlib_get_node_by_name (vm, (u8 *)"nsh-input");
+  if (!nsh_sfc_node)
+    return clib_error_return (0, "Could not find node nsh-input");
+
+  vlib_node_add_next (vm, nsh_sfc_node->index, nshsfdev_node.index);
+  vlib_node_add_next (vm, nshsfdev_node.index, nsh_sfc_node->index);
   return 0;
 }
 

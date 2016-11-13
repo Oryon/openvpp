@@ -1,0 +1,10 @@
+packet-generator new {
+    name s0
+    limit 1
+    size 106-106
+    node ethernet-input
+    data {
+0x894f: aa:aa:bb:bb:cc:00 -> aa:aa:bb:bb:cc:cc
+      hex 0x0002020300000a01ffffffff4011fc6b7f0000017f00000112b612b6004849f70c000004ffffff0030060201ffffffff0001020112345678000203011234567845000020d4310000ff116647c0a80001c0a8000227104e20000c217874657374 }
+}
+
